@@ -5,6 +5,7 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
+      - SQL_ACCESS_LEVEL=${SQL_ACCESS_LEVEL:-write}
       - SQL_SERVER=${SQL_SERVER}
       - SQL_PORT=${SQL_PORT:-1433}
       - SQL_DATABASE=${SQL_DATABASE}

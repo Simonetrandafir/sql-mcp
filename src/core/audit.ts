@@ -2,6 +2,7 @@ import sql from "mssql";
 import { createHash } from "crypto";
 import { appendFile, mkdir } from "fs/promises";
 import { join } from "path";
+import { defaultAuditLogPath } from "./environment.js";
 
 export interface AuditRecord {
   ts: string;                  // ISO8601 UTC
@@ -11,6 +12,8 @@ export interface AuditRecord {
   object_name: string | null;
   query_hash: string | null;   // SHA-256 hex of query text
   row_count: number | null;
+  affected_rows?: number;      // File sink: driver-reported rows processed
+  error?: string;              // File sink: failed execution diagnostic
   masked_cols: string | null;  // JSON array string
   blocked: boolean;
   block_reason: string | null;
@@ -73,7 +76,7 @@ export async function initAuditPool(): Promise<void> {
 // ── File sink ─────────────────────────────────────────────────────────────────
 
 async function writeToFile(record: AuditRecord): Promise<void> {
-  const logDir = process.env.AUDIT_LOG_PATH ?? "logs";
+  const logDir = process.env.AUDIT_LOG_PATH ?? defaultAuditLogPath;
   const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD UTC
   const filePath = join(logDir, `audit-${date}.log`);
 

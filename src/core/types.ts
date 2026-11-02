@@ -2,6 +2,12 @@ import type { Tool, CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 export type Row = Record<string, unknown>;
 export type QueryInput = { name: string; value: string | number | boolean | null };
+export interface SqlResult {
+  rows: Row[];
+  resultSets: Row[][];
+  /** Counts reported by the database driver, one per command when available. */
+  rowsAffected: number[];
+}
 export type ToolHandler = (name: string, args: Record<string, unknown>) => Promise<CallToolResult>;
 
 export interface DatabaseProvider {

@@ -1,8 +1,10 @@
 node_modules/
 dist/
+release/
 .env
 *.js.map
 logs/
+package-lock.json
 
 # Local Claude Code settings (may contain credentials)
 .claude/settings.local.json

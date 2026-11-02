@@ -1,24 +1,15 @@
 import sql from "mssql";
-import * as dotenv from "dotenv";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
+import "../../core/environment.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-import { requestContext } from "../../core/context.js";
-import { maskRows, filterListingRows } from "../../core/policy.js";
-import { writeAudit, hashQuery } from "../../core/audit.js";
+import { auditQuery, processSqlResult } from "../../core/query.js";
+import type { QueryInput, Row, SqlResult } from "../../core/types.js";
 
 export type { CallToolResult };
 export type { QueryInput } from "../../core/types.js";
 
-// Load .env from the project root regardless of working directory
-const __dirname = dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: join(__dirname, "..", "..", "..", ".env") });
-
-// Access level — 'read' is the only supported level for now.
-// Future: extend to 'write' to allow INSERT/UPDATE/DELETE.
-export type AccessLevel = "read";
-export const ACCESS_LEVEL: AccessLevel = "read";
+export { getAccessLevel } from "../../core/access.js";
+export type { AccessLevel } from "../../core/access.js";
 
 // Normalise an ADO.NET connection string to the key names the mssql driver understands.
 // Users often copy-paste strings from .NET app configs; this makes those work without changes.
@@ -112,51 +103,28 @@ export async function closePools(): Promise<void> {
 
 export async function sqlQuery(
   query: string,
-  inputs: { name: string; value: string | number | boolean | null }[] = [],
+  inputs: QueryInput[] = [],
   database?: string
 ): Promise<Record<string, unknown>[]> {
-  const ctx = requestContext.getStore();
-  const startMs = ctx?.startMs ?? Date.now();
-  const toolName = ctx?.tool ?? "unknown";
-  const args = ctx?.args ?? {};
+  return (await executeSql(query, inputs, database)).rows;
+}
 
-  const pool = await getPool(database);
-  const request = pool.request();
-  for (const { name, value } of inputs) {
-    request.input(name, value);
+export async function executeSql(query: string, inputs: QueryInput[] = [], database?: string): Promise<SqlResult> {
+  try {
+    const pool = await getPool(database);
+    const request = pool.request();
+    for (const { name, value } of inputs) request.input(name, value);
+    const result = await request.query<Row>(query);
+    const resultSets = result.recordsets ?? (result.recordset ? [result.recordset] : []);
+    return processSqlResult(query, {
+      rows: resultSets[0] ?? [],
+      resultSets,
+      rowsAffected: result.rowsAffected ?? [],
+    }, database);
+  } catch (error) {
+    auditQuery(query, database, { row_count: null, error: error instanceof Error ? error.message : String(error) });
+    throw error;
   }
-  const result = await request.query(query);
-  let rows = result.recordset as Record<string, unknown>[];
-
-  // Extract schema/table from args for masking/filtering
-  const schemaName = typeof args.schema === "string" ? args.schema : undefined;
-  const tableName = typeof args.table === "string" ? args.table : undefined;
-  const objectName = typeof args.name === "string" ? args.name : tableName;
-  const dbName = typeof args.database === "string" ? args.database : database;
-
-  // Apply column masking
-  const { rows: maskedRows, maskedColumns } = maskRows(rows, schemaName, tableName);
-  rows = maskedRows;
-
-  // Filter listing results (e.g. remove blocked tables from list_tables output)
-  rows = filterListingRows(rows, toolName);
-
-  // Write audit record (fire-and-forget)
-  writeAudit({
-    ts: new Date().toISOString(),
-    tool: toolName,
-    database_name: dbName ?? null,
-    schema_name: schemaName ?? null,
-    object_name: objectName ?? null,
-    query_hash: hashQuery(query),
-    row_count: rows.length,
-    masked_cols: maskedColumns.length > 0 ? JSON.stringify(maskedColumns) : null,
-    blocked: false,
-    block_reason: null,
-    duration_ms: Date.now() - startMs,
-  });
-
-  return rows;
 }
 
 // Safely quote a SQL Server identifier: wraps in [] and escapes ] as ]]

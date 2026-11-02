@@ -52,69 +52,34 @@ if (existsSync(targetDir)) {
 // ── Templates ─────────────────────────────────────────────────────────────────
 
 const CLIENT_TS = `\
-import * as dotenv from "dotenv";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
+import "../../core/environment.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-import { requestContext } from "../../core/context.js";
-import { maskRows, filterListingRows } from "../../core/policy.js";
-import { writeAudit, hashQuery } from "../../core/audit.js";
+import { processSqlResult } from "../../core/query.js";
+import type { QueryInput, SqlResult } from "../../core/types.js";
 
 export type { CallToolResult };
-export type QueryInput = { name: string; value: string | number | boolean | null };
+export type { QueryInput } from "../../core/types.js";
 
-// Load .env from the project root
-const __dirname = dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: join(__dirname, "..", "..", "..", ".env") });
-
-// TODO: Import and initialise your database driver
-// Example (pg):   import pg from "pg";
-// Example (mysql2): import mysql from "mysql2/promise";
-
-// TODO: Implement your connection pool management
-// const pools = new Map<string, YourPoolType>();
+// TODO: Import and initialise your database driver.
 
 export async function closePools(): Promise<void> {
-  // TODO: Close all open connection pools
+  // TODO: Close all open connection pools.
 }
 
-// TODO: Implement query execution using your driver.
-// \`inputs\` values should be passed as positional parameters ($1, $2, ...)
-// or named parameters depending on your driver.
-export async function sqlQuery(
-  query: string,
-  inputs: QueryInput[] = [],
-  database?: string
-): Promise<Record<string, unknown>[]> {
-  const ctx = requestContext.getStore();
-  const startMs = ctx?.startMs ?? Date.now();
-  const toolName = ctx?.tool ?? "unknown";
-  const args = ctx?.args ?? {};
+// Used by the schema exploration tools.
+export async function sqlQuery(query: string, inputs: QueryInput[] = [], database?: string): Promise<Record<string, unknown>[]> {
+  return (await executeSql(query, inputs, database)).rows;
+}
 
-  // TODO: Replace this stub with your driver's query execution
-  throw new Error(
-    \`[${name}] sqlQuery() not yet implemented. ` +
-    `Wire up your database driver in src/providers/${name}/client.ts\`
-  );
-
-  // TEMPLATE: After executing, apply masking + audit (copy this block):
-  // let rows = result.rows as Record<string, unknown>[];
-  // const schemaName = typeof args.schema === "string" ? args.schema : undefined;
-  // const tableName = typeof args.table === "string" ? args.table : undefined;
-  // const { rows: maskedRows, maskedColumns } = maskRows(rows, schemaName, tableName);
-  // rows = maskedRows;
-  // rows = filterListingRows(rows, toolName);
-  // writeAudit({
-  //   ts: new Date().toISOString(), tool: toolName,
-  //   database_name: (typeof args.database === "string" ? args.database : database) ?? null,
-  //   schema_name: schemaName ?? null,
-  //   object_name: (typeof args.name === "string" ? args.name : tableName) ?? null,
-  //   query_hash: hashQuery(query), row_count: rows.length,
-  //   masked_cols: maskedColumns.length > 0 ? JSON.stringify(maskedColumns) : null,
-  //   blocked: false, block_reason: null, duration_ms: Date.now() - startMs,
-  // });
-  // return rows;
+// TODO: Execute any SQL allowed by the database login. Support commands without
+// returned rows as well as SELECT, RETURNING/OUTPUT and multiple result sets.
+export async function executeSql(query: string, inputs: QueryInput[] = [], database?: string): Promise<SqlResult> {
+  throw new Error("Database driver not yet implemented");
+  // After executing, normalize the driver's output and apply privacy + audit:
+  // return processSqlResult(query, {
+  //   rows: resultSets[0] ?? [], resultSets, rowsAffected: counts,
+  // }, database);
 }
 
 // Safely quote an identifier using double-quotes (ANSI SQL standard)
@@ -158,62 +123,11 @@ export function validateReadOnly(query: string): { valid: boolean; error?: strin
 `;
 
 const QUERY_TS = `\
-import { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { sqlQuery, validateReadOnly, textResult, errorResult } from "../client.js";
-import { getPolicy, checkQueryPolicy } from "../../../core/policy.js";
-import type { CallToolResult } from "../client.js";
+import { createQueryHandler, createQueryTool } from "../../../core/query.js";
+import { executeSql, validateReadOnly } from "../client.js";
 
-const DEFAULT_MAX_ROWS = 1000;
-
-export const queryTools: Tool[] = [
-  {
-    name: "execute_query",
-    description:
-      "Execute a read-only SELECT query. " +
-      "Only SELECT statements (and CTEs using WITH) are permitted. " +
-      \`Results are capped at \${DEFAULT_MAX_ROWS} rows by default.\`,
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "The SELECT query to execute" },
-        database: { type: "string", description: "Database to run the query against" },
-        max_rows: {
-          type: "number",
-          description: \`Maximum rows to return (default: \${DEFAULT_MAX_ROWS}, max: 5000)\`,
-        },
-      },
-      required: ["query"],
-    },
-  },
-];
-
-export async function handleQueryTool(
-  name: string,
-  args: Record<string, unknown>
-): Promise<CallToolResult> {
-  try {
-    if (name === "execute_query") {
-      const { query, database, max_rows } = args as {
-        query: string; database?: string; max_rows?: number;
-      };
-
-      const validation = validateReadOnly(query);
-      if (!validation.valid) return errorResult(validation.error!);
-
-      const policyCheck = checkQueryPolicy(query);
-      if (!policyCheck.allowed) return errorResult(policyCheck.reason);
-
-      const policy = getPolicy();
-      const limit = Math.min(max_rows ?? DEFAULT_MAX_ROWS, policy.maxRows);
-      const rows = await sqlQuery(query, [], database);
-      const trimmed = rows.slice(0, limit);
-      return textResult({ rows: trimmed, row_count: trimmed.length, truncated: trimmed.length < rows.length });
-    }
-    return errorResult(\`Unknown tool: \${name}\`);
-  } catch (e) {
-    return errorResult(e instanceof Error ? e.message : String(e));
-  }
-}
+export const queryTools = [createQueryTool("Database", "your database pagination syntax")];
+export const handleQueryTool = createQueryHandler(executeSql, validateReadOnly);
 `;
 
 const DATABASES_TS = `\
@@ -436,14 +350,14 @@ Scaffolded provider '${name}' — ${files.length} files created.
   ├── client.ts           ← wire up your DB driver here
   ├── index.ts            ← provider assembly (compiles immediately)
   └── tools/
-      ├── query.ts        ← ready once sqlQuery() works
+      ├── query.ts        ← ready once executeSql() works
       ├── databases.ts    ← fill in TODO query
       ├── schemas.ts      ← fill in TODO query
       └── tables.ts       ← fill in TODO queries (list_tables, describe_table)
 
 Next steps:
   1. Install your driver:  npm install <your-driver>
-  2. Implement sqlQuery() in src/providers/${name}/client.ts
+  2. Implement executeSql() in src/providers/${name}/client.ts
   3. Fill in TODO queries in the tools/ files
   4. Wire up the provider in src/index.ts:
        import { ${camel}Provider, checkEnv } from "./providers/${name}/index.js";

@@ -10,6 +10,7 @@ import express from "express";
 import { requestContext } from "./context.js";
 import { checkArgPolicy } from "./policy.js";
 import { writeAudit } from "./audit.js";
+import { logMessage } from "./logging.js";
 import type { DatabaseProvider } from "./types.js";
 
 function createServer(provider: DatabaseProvider): Server {
@@ -68,7 +69,7 @@ export async function startStdio(provider: DatabaseProvider): Promise<void> {
   const server = createServer(provider);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  process.stderr.write(
+  logMessage(
     `[${provider.id}] stdio — ${provider.tools.length} tools available\n`
   );
 }
@@ -90,9 +91,12 @@ export async function startHttp(provider: DatabaseProvider, port: number): Promi
     await transport.handleRequest(req, res, req.body);
   });
 
-  app.listen(port, () => {
-    process.stderr.write(
-      `[${provider.id}] HTTP — ${provider.tools.length} tools on http://0.0.0.0:${port}/mcp\n`
-    );
+  await new Promise<void>((resolve, reject) => {
+    const listener = app.listen(port);
+    listener.once("error", reject);
+    listener.once("listening", () => {
+      logMessage(`[${provider.id}] HTTP — ${provider.tools.length} tools on http://0.0.0.0:${port}/mcp\n`);
+      resolve();
+    });
   });
 }

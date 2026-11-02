@@ -13,4 +13,4 @@ export const defaultAuditLogPath = isSea()
   ? join(applicationDirectory, "logs")
   : "logs";
 
-dotenv.config({ path: join(applicationDirectory, ".env") });
+dotenv.config({ path: join(applicationDirectory, ".env"), quiet: true });

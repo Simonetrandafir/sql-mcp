@@ -1,3 +1,4 @@
+import { logMessage } from "../../core/logging.js";
 import { databaseTools, handleDatabaseTool } from "./tools/databases.js";
 import { schemaTools, handleSchemaTool } from "./tools/schemas.js";
 import { tableTools, handleTableTool } from "./tools/tables.js";
@@ -117,7 +118,7 @@ export function checkEnv(): void {
   const required = ["SQL_SERVER", "SQL_USER", "SQL_PASSWORD"];
   const missing = required.filter((v) => !process.env[v]);
   if (missing.length > 0) {
-    process.stderr.write(
+    logMessage(
       `[mssql] ERROR: Provide SQL_CONNECTION_STRING, or set: ${missing.join(", ")}\n` +
         `[mssql] Copy .env.example to .env and fill in the values.\n`
     );

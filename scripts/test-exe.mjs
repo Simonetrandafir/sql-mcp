@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { getWindowsSubsystem } from "./windows-executable.mjs";
 
 const sourceExecutable = process.env.SQL_MCP_EXE
   ? resolve(process.env.SQL_MCP_EXE)
@@ -16,7 +17,7 @@ const sourceExecutable = process.env.SQL_MCP_EXE
 
 async function isolatedExecutable(t, configuration = "") {
   const directory = await mkdtemp(join(tmpdir(), "sql-mcp-exe-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const executable = join(directory, "sql-mcp.exe");
   await copyFile(sourceExecutable, executable);
   await writeFile(join(directory, ".env"), configuration);
@@ -24,7 +25,7 @@ async function isolatedExecutable(t, configuration = "") {
   // No Node.js or node_modules beside the executable, and no Node.js on PATH.
   // Also prevent the developer's own database credentials affecting the tests.
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-    !/^(SQL_|PG_|DB_PROVIDER$|PORT$|AUDIT_|NODE_|DOTENV_|PATH$)/i.test(key)
+    !/^(SQL_|PG_|DB_PROVIDER$|PORT$|AUDIT_|APP_LOG_PATH$|NODE_|DOTENV_|PATH$)/i.test(key)
   ));
   env.PATH = "";
   env.PORT = "";
@@ -45,6 +46,22 @@ async function unusedPort() {
   await new Promise((resolve) => socket.close(resolve));
   return port;
 }
+
+async function waitForHttp(port) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) });
+      return await response.json();
+    } catch {
+      await delay(100);
+    }
+  }
+  throw new Error("Background HTTP server did not start.");
+}
+
+test("Windows executable has the GUI subsystem so Windows does not allocate a console", async () => {
+  assert.equal(getWindowsSubsystem(await readFile(sourceExecutable)), 2);
+});
 
 test("standalone help runs without configuration or Node.js on PATH", async (t) => {
   const { executable, env } = await isolatedExecutable(t);
@@ -178,5 +195,75 @@ test("HTTP starts using .env beside the executable from a different directory", 
   } finally {
     child.kill();
     await exited;
+  }
+});
+
+test("background HTTP survives its launcher exiting and writes application logs", async (t) => {
+  const port = await unusedPort();
+  const { directory, executable, env } = await isolatedExecutable(t, providerConfiguration("postgres") + `PORT=${port}\n`);
+  delete env.PORT;
+  const launcher = join(directory, "launch.cjs");
+  await writeFile(launcher,
+    'const { spawn } = require("node:child_process");\n' +
+    'const child = spawn(process.argv[2], [], { detached: true, stdio: "ignore", windowsHide: true });\n' +
+    'child.once("error", () => process.exit(1));\n' +
+    'child.once("spawn", () => { console.log(child.pid); child.unref(); });\n');
+  const started = spawnSync(process.execPath, [launcher, executable], {
+    env, encoding: "utf8", timeout: 15000, windowsHide: true,
+  });
+  assert.ifError(started.error);
+  assert.equal(started.status, 0, started.stderr);
+  const childPid = Number(started.stdout.trim());
+  assert.ok(Number.isInteger(childPid) && childPid > 0);
+  try {
+    const info = await waitForHttp(port);
+    assert.equal(info.name, "postgres");
+    process.kill(childPid, 0);
+    const logFile = join(directory, "logs", `server-${new Date().toISOString().slice(0, 10)}.log`);
+    const logs = await readFile(logFile, "utf8");
+    assert.match(logs, /SQL access level: read/);
+    assert.match(logs, /HTTP/);
+  } finally {
+    try { process.kill(childPid); } catch (error) { if (error.code !== "ESRCH") throw error; }
+    for (let attempt = 0; attempt < 50; attempt++) {
+      try { process.kill(childPid, 0); } catch { break; }
+      await delay(100);
+    }
+  }
+});
+
+test("silent HTTP startup errors are written to APP_LOG_PATH without console output", async (t) => {
+  const { directory, executable, env } = await isolatedExecutable(t, providerConfiguration("postgres"));
+  env.PORT = "not-a-port";
+  env.APP_LOG_PATH = join(directory, "application-logs");
+  const result = spawnSync(executable, [], {
+    env, cwd: tmpdir(), encoding: "utf8", timeout: 15000, windowsHide: true,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+  const logs = await readFile(join(env.APP_LOG_PATH, `server-${new Date().toISOString().slice(0, 10)}.log`), "utf8");
+  assert.match(logs, /Fatal.*PORT must be an integer/);
+});
+
+test("silent HTTP reports an occupied port in its application log", async (t) => {
+  const socket = createServer();
+  await new Promise((resolve, reject) => { socket.once("error", reject); socket.listen(0, resolve); });
+  const port = socket.address().port;
+  const { directory, executable, env } = await isolatedExecutable(t, providerConfiguration("postgres"));
+  env.PORT = String(port);
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const child = spawn(executable, [], { env, cwd: tmpdir(), stdio: "ignore", windowsHide: true });
+      const timeout = setTimeout(() => { child.kill(); reject(new Error("Server failed to exit after a port conflict.")); }, 15000);
+      child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+      child.once("exit", (code) => { clearTimeout(timeout); resolve(code); });
+    });
+    assert.equal(result, 1);
+    const logs = await readFile(join(directory, "logs", `server-${new Date().toISOString().slice(0, 10)}.log`), "utf8");
+    assert.match(logs, /Fatal.*EADDRINUSE/);
+  } finally {
+    await new Promise((resolve) => socket.close(resolve));
   }
 });

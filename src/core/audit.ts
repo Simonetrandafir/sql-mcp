@@ -1,3 +1,4 @@
+import { logMessage } from "./logging.js";
 import sql from "mssql";
 import { createHash } from "crypto";
 import { appendFile, mkdir } from "fs/promises";
@@ -63,11 +64,11 @@ export async function initAuditPool(): Promise<void> {
 
     auditPool = await new sql.ConnectionPool(config as sql.config).connect();
     auditPool.on("error", (err: Error) => {
-      process.stderr.write(`[sql-mcp] Audit pool error: ${err.message}\n`);
+      logMessage(`[sql-mcp] Audit pool error: ${err.message}\n`);
       auditPool = null;
     });
   } catch (err) {
-    process.stderr.write(
+    logMessage(
       `[sql-mcp] Audit pool init failed: ${err instanceof Error ? err.message : String(err)}\n`
     );
   }
@@ -120,10 +121,10 @@ async function writeToSql(record: AuditRecord): Promise<void> {
 export function writeAudit(record: AuditRecord): void {
   Promise.all([
     writeToFile(record).catch((err) =>
-      process.stderr.write(`[sql-mcp] Audit file write failed: ${err instanceof Error ? err.message : String(err)}\n`)
+      logMessage(`[sql-mcp] Audit file write failed: ${err instanceof Error ? err.message : String(err)}\n`)
     ),
     writeToSql(record).catch((err) =>
-      process.stderr.write(`[sql-mcp] Audit SQL write failed: ${err instanceof Error ? err.message : String(err)}\n`)
+      logMessage(`[sql-mcp] Audit SQL write failed: ${err instanceof Error ? err.message : String(err)}\n`)
     ),
   ]);
 }

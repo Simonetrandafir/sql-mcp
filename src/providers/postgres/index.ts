@@ -1,3 +1,4 @@
+import { logMessage } from "../../core/logging.js";
 import { databaseTools, handleDatabaseTool } from "./tools/databases.js";
 import { schemaTools, handleSchemaTool } from "./tools/schemas.js";
 import { tableTools, handleTableTool } from "./tools/tables.js";
@@ -69,7 +70,7 @@ export function checkEnv(): void {
     const required = ["PG_HOST", "PG_USER"];
     const missing = required.filter((v) => !process.env[v]);
     if (missing.length > 0) {
-      process.stderr.write(
+      logMessage(
         `[postgres] ERROR: PG_AZURE_AD_AUTH=true requires: ${missing.join(", ")}\n` +
           `[postgres] The access token is acquired via 'az login' (no PG_PASSWORD needed).\n`
       );
@@ -83,7 +84,7 @@ export function checkEnv(): void {
   const required = ["PG_HOST", "PG_USER", "PG_PASSWORD"];
   const missing = required.filter((v) => !process.env[v]);
   if (missing.length > 0) {
-    process.stderr.write(
+    logMessage(
       `[postgres] ERROR: Provide PG_CONNECTION_STRING, or set: ${missing.join(", ")}\n` +
         `[postgres] Copy .env.example to .env and fill in the values.\n`
     );

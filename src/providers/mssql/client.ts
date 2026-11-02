@@ -1,3 +1,4 @@
+import { logMessage } from "../../core/logging.js";
 import sql from "mssql";
 import "../../core/environment.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
@@ -86,7 +87,7 @@ export async function getPool(database?: string): Promise<sql.ConnectionPool> {
       buildConnectionSource(database) as sql.config
     ).connect();
     pool.on("error", (err: Error) => {
-      process.stderr.write(`[mssql] Pool error [${key}]: ${err.message}\n`);
+      logMessage(`[mssql] Pool error [${key}]: ${err.message}\n`);
       pools.delete(key);
     });
     pools.set(key, pool);

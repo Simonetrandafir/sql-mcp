@@ -1,3 +1,4 @@
+import { logMessage } from "../../core/logging.js";
 import pg from "pg";
 import "../../core/environment.js";
 import { AzureCliCredential } from "@azure/identity";
@@ -86,7 +87,7 @@ export async function getPool(database?: string): Promise<pg.Pool> {
   if (!pools.has(key)) {
     const pool = new pg.Pool(buildConfig(database));
     pool.on("error", (err: Error) => {
-      process.stderr.write(`[postgres] Pool error [${key}]: ${err.message}\n`);
+      logMessage(`[postgres] Pool error [${key}]: ${err.message}\n`);
       pools.delete(key);
     });
     // Eagerly test the connection

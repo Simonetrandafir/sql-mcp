@@ -282,6 +282,7 @@ import { schemaTools, handleSchemaTool } from "./tools/schemas.js";
 import { tableTools, handleTableTool } from "./tools/tables.js";
 import { queryTools, handleQueryTool } from "./tools/query.js";
 import { validateReadOnly, closePools } from "./client.js";
+import { logMessage } from "../../core/logging.js";
 import type { DatabaseProvider } from "../../core/types.js";
 
 export const ${name.replace(/-./g, (m) => m[1].toUpperCase())}Provider: DatabaseProvider = {
@@ -316,7 +317,7 @@ export function checkEnv(): void {
   // const required = ["PG_HOST", "PG_USER", "PG_PASSWORD"];
   // const missing = required.filter(v => !process.env[v]);
   // if (missing.length > 0) {
-  //   process.stderr.write(\`[${name}] ERROR: missing env vars: \${missing.join(", ")}\\n\`);
+  //   logMessage(\`[${name}] ERROR: missing env vars: \${missing.join(", ")}\\n\`);
   //   process.exit(1);
   // }
 }

@@ -34,7 +34,7 @@ Il progetto supporta query di lettura, inserimento, aggiornamento e cancellazion
 | Gestione degli oggetti | `CREATE`, `ALTER`, `DROP` e `TRUNCATE`, comprese operazioni su database e tabelle |
 | Risultati SQL | Righe restituite, conteggi del driver, risultati multipli e limiti della risposta |
 | Trasporti MCP | Comunicazione locale tramite stdio oppure MCP Streamable HTTP su `/mcp` |
-| Distribuzione | Applicazione Node.js compilata, contenitore Docker o eseguibile Windows con runtime incorporato |
+| Distribuzione | Applicazione Node.js compilata, contenitore Docker o eseguibile Windows silente con runtime incorporato |
 | Configurazione | Variabili d'ambiente e file `.env` esterno |
 | Controlli applicativi | Modalità `read` e `write`, controlli su schemi e tabelle, mascheramento contestuale delle colonne |
 | Audit | File JSON giornalieri e registrazione facoltativa su un database SQL Server |
@@ -265,6 +265,8 @@ La presenza di una porta valida abilita HTTP. Se `PORT` non è impostata, viene 
 
 Lo script di compilazione include applicazione, provider SQL Server e PostgreSQL, dipendenze JavaScript necessarie e runtime Node.js. La configurazione resta in un `.env` esterno, così può essere modificata senza ricompilare e le credenziali non vengono incorporate durante la compilazione.
 
+La compilazione predefinita genera un'applicazione Windows **silente**, che non apre una finestra del terminale. Con HTTP abilitato, il processo continua a funzionare in background anche dopo la chiusura del programma che lo ha avviato. Gli strumenti MCP restano disponibili su `/mcp`.
+
 La procedura usa [Node.js Single Executable Applications](https://nodejs.org/download/release/v24.0.0/docs/api/single-executable-applications.html), con esbuild per riunire il codice in un file CommonJS e postject per incorporarlo in una copia del runtime. Lo stesso eseguibile Node.js viene usato per generare il contenuto incorporato e fornire il runtime finale.
 
 ### Compilazione su Windows
@@ -299,8 +301,10 @@ notepad .\release\.env
 Inserisci i parametri del database e scegli il livello di accesso. Poi avvia:
 
 ```powershell
-.\release\sql-mcp.exe
+Start-Process -FilePath .\release\sql-mcp.exe -WindowStyle Hidden
 ```
+
+Puoi anche aprire direttamente `sql-mcp.exe` con un doppio clic. Per l'esecuzione autonoma in background configura `PORT=3000` nel `.env`; senza `PORT`, il processo usa stdio e deve essere avviato da un client MCP.
 
 Con l'esempio generato, gli indirizzi sono:
 
@@ -326,7 +330,37 @@ C:\Apps\sql-mcp\
 
 La cartella `logs/` viene creata al primo evento di audit. Per impostazione predefinita si trova accanto all'eseguibile e deve essere scrivibile; puoi scegliere un altro percorso tramite `AUDIT_LOG_PATH`.
 
-L'applicazione viene eseguita in console e si arresta con **Ctrl+C**. Lo script non installa un servizio Windows e non aggiunge una firma digitale. Una firma può essere applicata all'eseguibile prodotto con gli strumenti previsti dalla distribuzione.
+L'eseguibile rimane visibile nella sezione **Dettagli** di Gestione attività. Per arrestarlo puoi terminarne il processo da lì oppure usare PowerShell, indicando il nome della copia da chiudere:
+
+```powershell
+Get-Process -Name sql-mcp | Select-Object Id, ProcessName
+Stop-Process -Id <ID_DEL_PROCESSO>
+```
+
+Sostituisci `<ID_DEL_PROCESSO>` con l'ID mostrato dal primo comando. Lo script non installa un servizio Windows, non configura l'avvio automatico e non aggiunge una firma digitale. Una firma può essere applicata all'eseguibile prodotto con gli strumenti previsti dalla distribuzione.
+
+### Messaggi di avvio ed errori della versione silente
+
+La versione silente salva i messaggi applicativi in `logs/server-YYYY-MM-DD.log` accanto al file `.exe`, con data e orario UTC. Il file include avvio HTTP, livello di accesso SQL ed errori, come porta non valida, porta già occupata o configurazione mancante. Il processo termina con codice `1` quando l'avvio fallisce.
+
+Per scegliere un'altra cartella, configura un percorso assoluto:
+
+```env
+APP_LOG_PATH=C:/Apps/sql-mcp/logs
+```
+
+I file `server-*.log` contengono i messaggi applicativi; i file `audit-*.log` registrano le operazioni SQL. Le impostazioni `APP_LOG_PATH` e `AUDIT_LOG_PATH` sono indipendenti. I percorsi relativi personalizzati vengono risolti dalla cartella di lavoro del processo.
+
+### Compilazione con console per la diagnosi
+
+Per ottenere una variante che mantiene la console e i messaggi su stderr:
+
+```powershell
+npm run build:exe -- --console sql-mcp-console.exe
+.\release\sql-mcp-console.exe
+```
+
+Questa variante usa lo stesso `.env` della cartella `release/` e si arresta con **Ctrl+C**. È utile anche per leggere direttamente la guida con `--help`. La versione silente resta utilizzabile tramite stdio da un client MCP: i flussi del protocollo vengono conservati e i messaggi diagnostici restano disponibili su stderr per il client.
 
 ### Aggiornamento di una copia già in esecuzione
 
@@ -899,7 +933,9 @@ Dopo averlo compilato:
 npm run test:exe
 ```
 
-La suite attuale contiene 7 test. Copia il solo eseguibile in cartelle temporanee, crea configurazioni di prova e rimuove Node.js dal `PATH` del processo figlio. Verifica guida, errori di configurazione, inizializzazione MCP tramite stdio, strumenti dei due provider, validazione in lettura, inoltro delle scritture, audit e risposta HTTP.
+La suite attuale contiene 11 test ed è destinata alla compilazione silente predefinita. Copia il solo eseguibile in cartelle temporanee, crea configurazioni di prova e rimuove Node.js dal `PATH` del processo figlio. Verifica il sottosistema Windows senza console, guida, errori di configurazione, inizializzazione MCP tramite stdio, strumenti dei due provider, validazione in lettura, inoltro delle scritture, audit e risposta HTTP.
+
+Verifica anche che il server resti attivo dopo l'uscita del processo che lo ha avviato, con i flussi standard scollegati, e che scriva i messaggi applicativi su file. I test coprono inoltre gli errori di porta non valida e porta già occupata.
 
 Le connessioni dei driver vengono provate su porte locali non in ascolto: il risultato atteso è un errore di rete del driver. Questi test non usano le credenziali del database configurato dall'utente.
 
@@ -972,13 +1008,13 @@ npm run test:write -- .\release\sql-mcp-next.exe
 
 ### Controllo HTTP manuale
 
-Nel primo terminale, con `PORT=3000` nel `.env` dell'eseguibile:
+Con `PORT=3000` nel `.env` dell'eseguibile, avvia il processo in background:
 
 ```powershell
-.\release\sql-mcp.exe
+Start-Process -FilePath .\release\sql-mcp.exe -WindowStyle Hidden
 ```
 
-Nel secondo terminale:
+Poi, nello stesso terminale o in un altro:
 
 ```powershell
 Invoke-RestMethod http://localhost:3000/
@@ -1071,6 +1107,7 @@ Per includerlo nell'eseguibile, ricompila con `npm run build:exe`. Lo script con
 |---|---|
 | `src/index.ts` | Avvio, scelta del provider, controllo della configurazione e selezione del trasporto |
 | `src/core/environment.ts` | Individuazione e caricamento del `.env`, percorsi predefiniti dell'audit |
+| `src/core/logging.ts` | Messaggi applicativi su file per l'eseguibile silente e diagnostica stderr per Node.js e stdio |
 | `src/core/access.ts` | Lettura e validazione di `SQL_ACCESS_LEVEL` |
 | `src/core/server.ts` | Server MCP, trasporti stdio e HTTP, controllo degli argomenti |
 | `src/core/query.ts` | Definizione e gestore condivisi di `execute_query`, limiti, risultati e audit |
@@ -1080,6 +1117,7 @@ Per includerlo nell'eseguibile, ricompila con `npm run build:exe`. Lo script con
 | `src/providers/mssql/` | Connessioni, validatore e strumenti SQL Server |
 | `src/providers/postgres/` | Connessioni, autenticazione Entra, validatore e strumenti PostgreSQL |
 | `scripts/build-exe.mjs` | Creazione dell'eseguibile Windows con esbuild, SEA e postject |
+| `scripts/windows-executable.mjs` | Lettura e impostazione del sottosistema Windows silente o con console |
 | `scripts/test-query.mjs` | Test delle query con operazioni del driver simulate |
 | `scripts/test-exe.mjs` | Test dell'eseguibile in cartelle isolate |
 | `scripts/test-connection.mjs` | Prove reali di connessione e scrittura su tabella temporanea |
@@ -1092,8 +1130,9 @@ Per includerlo nell'eseguibile, ricompila con `npm run build:exe`. Lo script con
 | `npm run dev` | Esegue `src/index.ts` tramite tsx senza compilazione preventiva |
 | `npm run build` | Compila TypeScript in `dist/` |
 | `npm start` | Avvia `dist/index.js` con Node.js |
-| `npm run build:exe` | Compila e genera `release/sql-mcp.exe` su Windows |
+| `npm run build:exe` | Compila e genera `release/sql-mcp.exe` silente su Windows |
 | `npm run build:exe -- sql-mcp-next.exe` | Genera un eseguibile con nome alternativo |
+| `npm run build:exe -- --console sql-mcp-console.exe` | Genera una variante con console per la diagnosi |
 | `npm test` | Compila ed esegue i test di gestione delle query |
 | `npm run test:exe` | Verifica il pacchetto eseguibile |
 | `npm run test:connection` | Verifica il collegamento al database configurato |
@@ -1103,13 +1142,15 @@ Per includerlo nell'eseguibile, ricompila con `npm run build:exe`. Lo script con
 
 `npm run inspect` usa il `.env` principale del progetto e il processo Node.js compilato. Per usarlo tramite stdio, lascia `PORT` non impostata in quella configurazione. Il file `release/.env` viene invece usato dagli eseguibili nella cartella `release/`.
 
-Il server scrive i propri messaggi applicativi di avvio e gli errori su stderr; il trasporto MCP locale usa stdin e stdout per i messaggi di protocollo.
+Con Node.js o la variante con console, i messaggi applicativi di avvio e gli errori sono scritti su stderr. La versione Windows silente li salva anche su file e, in modalità HTTP, non emette messaggi sui flussi standard. Il trasporto MCP locale mantiene stdin e stdout per i messaggi di protocollo. Il caricamento di `.env` non stampa messaggi aggiuntivi su stdout.
 
 ## Risoluzione dei problemi
 
 | Problema | Verifica |
 |---|---|
 | Il processo rimane in attesa senza aprire una porta HTTP | Controlla `PORT`: se non è impostata viene usato stdio |
+| Il doppio clic non apre una finestra | È il comportamento della versione silente; verifica `http://localhost:3000/`, Gestione attività e `logs/server-YYYY-MM-DD.log` |
+| Il processo silente si chiude durante l'avvio | Leggi il file applicativo per controllare configurazione, formato di `PORT`, porta già occupata e permessi della cartella dei log |
 | La radice HTTP risponde ma una query fallisce | Esegui `test:connection` e controlla connessione, credenziali e permessi del database |
 | Il comando di modifica viene rifiutato come sola lettura | Controlla `SQL_ACCESS_LEVEL`, eventuali variabili del processo con precedenza sul `.env` e la versione dell'eseguibile avviato |
 | La query raggiunge il database ma restituisce un errore di permessi | L'utenza deve avere i privilegi richiesti per il comando; `write` non assegna autorizzazioni |

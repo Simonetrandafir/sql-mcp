@@ -3,6 +3,11 @@ import "./core/environment.js";
 import { initAuditPool } from "./core/audit.js";
 import { startStdio, startHttp } from "./core/server.js";
 import { getAccessLevel } from "./core/access.js";
+import { logMessage } from "./core/logging.js";
+
+process.on("uncaughtExceptionMonitor", (error) => {
+  logMessage(`[sql-mcp] Uncaught exception: ${error.stack ?? error.message}\n`);
+});
 
 const providerName = (process.env.DB_PROVIDER ?? "mssql").toLowerCase();
 
@@ -15,7 +20,7 @@ async function loadProvider() {
     const m = await import("./providers/mssql/index.js");
     return { provider: m.mssqlProvider, checkEnv: m.checkEnv };
   }
-  process.stderr.write(
+  logMessage(
     `[sql-mcp] Unknown provider '${providerName}'. ` +
       `Set DB_PROVIDER to one of: mssql, postgres\n`
   );
@@ -30,6 +35,7 @@ async function main() {
       "Set PORT=3000 for HTTP at http://localhost:3000/mcp.\n" +
       "Leave PORT unset for MCP stdio. Set DB_PROVIDER=mssql or postgres.\n"
       + "SQL_ACCESS_LEVEL=write (default) allows data and schema changes; read restricts SELECT.\n"
+      + "Silent Windows builds log to logs/server-YYYY-MM-DD.log (override APP_LOG_PATH).\n"
     );
     return;
   }
@@ -37,10 +43,14 @@ async function main() {
   const { provider, checkEnv } = await loadProvider();
   const accessLevel = getAccessLevel();
   checkEnv();
-  process.stderr.write(`[${providerName}] SQL access level: ${accessLevel}\n`);
+  logMessage(`[${providerName}] SQL access level: ${accessLevel}\n`);
+  const configuredPort = process.env.PORT;
+  const port = configuredPort ? Number(configuredPort) : null;
+  if (port !== null && (!/^\d+$/.test(configuredPort!) || !Number.isInteger(port) || port < 1 || port > 65535)) {
+    throw new Error("PORT must be an integer between 1 and 65535, or unset for MCP stdio.");
+  }
   await initAuditPool();
   await provider.initialize?.();
-  const port = process.env.PORT ? parseInt(process.env.PORT) : null;
   if (port) {
     await startHttp(provider, port);
   } else {
@@ -49,6 +59,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  process.stderr.write(`[${providerName}] Fatal: ${err}\n`);
+  logMessage(`[${providerName}] Fatal: ${err}\n`);
   process.exit(1);
 });

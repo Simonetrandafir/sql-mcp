@@ -1,6 +1,6 @@
 {
   "name": "sql-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "SQL Server and PostgreSQL MCP server — query and manage databases, schemas, tables and data",
   "type": "module",
   "main": "dist/index.js",
